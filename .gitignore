@@ -1,0 +1,4 @@
+*.ps1~
+*.log
+*.zip
+IR_Reports/
