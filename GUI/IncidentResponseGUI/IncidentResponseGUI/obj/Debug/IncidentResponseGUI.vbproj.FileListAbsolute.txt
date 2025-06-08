@@ -1,0 +1,16 @@
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\bin\Debug\IncidentResponseGUI.exe.config
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\bin\Debug\IncidentResponseGUI.exe
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\bin\Debug\IncidentResponseGUI.pdb
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\bin\Debug\IncidentResponseGUI.xml
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.vbproj.AssemblyReference.cache
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseTool.baml
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\Application.g.vb
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI_MarkupCompile.cache
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.g.resources
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.Resources.resources
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.vbproj.GenerateResource.cache
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.vbproj.CoreCompileInputs.cache
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.exe
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.xml
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.pdb
+C:\Scripts\Incident Response\GUI\IncidentResponseGUI\IncidentResponseGUI\obj\Debug\IncidentResponseGUI.exe.config
