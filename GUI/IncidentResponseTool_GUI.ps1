@@ -25,6 +25,7 @@ $UpnInput    = $Window.FindName("UpnInput")
 $StartButton = $Window.FindName("StartButton")
 $ProgressBar = $Window.FindName("ProgressBar")
 $OutputBox   = $Window.FindName("OutputBox")
+$ExitButton  = $Window.FindName("ExitButton")
 
 # Function: Append to output window
 function Write-GuiOutput {
@@ -39,6 +40,12 @@ $Window.Add_Closed({
     Disconnect-MgGraph -ErrorAction SilentlyContinue
 })
 
+# Exit Button logic
+$ExitButton.Add_Click({
+    Disconnect-MgGraph | Out-Null
+    $Window.Close()
+})
+
 # Wire button click to shared core logic
 $StartButton.Add_Click({
     $UserPrincipalName = $UpnInput.Text
@@ -48,7 +55,7 @@ $StartButton.Add_Click({
     }
 
     Write-GuiOutput "Starting incident response for: $UserPrincipalName"
-    $ProgressBar.Value = 1
+    $ProgressBar.Value = 0
 
     $RunTimestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
     $FileDateStamp = Get-Date -Format "MM-dd-yyyy"
@@ -59,24 +66,33 @@ $StartButton.Add_Click({
         New-Item -ItemType Directory -Path $OutputFolder | Out-Null
     }
 
+    Write-GuiOutput "Retrieving user information..."
     $User = Get-UserInformation -UserPrincipalName $UserPrincipalName
     if (-not $User) {
         Write-GuiOutput "Unable to find user '$UserPrincipalName'. Please check the UPN and try again."
         return
     }
-
     Write-GuiOutput "Display Name     : $($User.DisplayName)"
     Write-GuiOutput "User Principal   : $($User.UserPrincipalName)"
     Write-GuiOutput "ID               : $($User.Id)"
+    $ProgressBar.Value = 1
 
-    $ProgressBar.Value = 2
+    Write-GuiOutput "Retrieving audit logs..."
     $AuditLogs = Get-AuditLogs -UserPrincipalName $UserPrincipalName -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp
-    $ProgressBar.Value = 3
+    $ProgressBar.Value = 2
+
+    Write-GuiOutput "Retrieving sign-in logs..."
     $SignInLogs = Get-SignInLogs -UserPrincipalName $UserPrincipalName
+    $ProgressBar.Value = 3
+
+    Write-GuiOutput "Retrieving mailbox rules..."
     $MailboxRules = Get-MailboxRules -UserPrincipalName $UserPrincipalName
+    $ProgressBar.Value = 4
+
+    Write-GuiOutput "Retrieving registered devices..."
     $Devices = Get-RegisteredDevices -User $User
 
-    $ProgressBar.Value = 4
+    Write-GuiOutput "Writing summary file..."
     $Summary = @{
         User = $UserPrincipalName
         Timestamp = $RunTimestamp
@@ -86,11 +102,12 @@ $StartButton.Add_Click({
         DevicesFound = ($Devices -ne $null -and $Devices.Count -gt 0)
     }
     $Summary | ConvertTo-Json -Depth 5 | Out-File "$OutputFolder\Summary.json"
-
     $ProgressBar.Value = 5
-    $IOCFindings = Get-IOCAnalysis -SignInLogs $SignInLogs -MailboxRules $MailboxRules -AuditLogs $AuditLogs -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp
 
+    Write-GuiOutput "Running IOC analysis..."
+    $IOCFindings = Get-IOCAnalysis -SignInLogs $SignInLogs -MailboxRules $MailboxRules -AuditLogs $AuditLogs -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp
     $ProgressBar.Value = 6
+
     Write-GuiOutput "Incident response completed for $UserPrincipalName`n"
     Write-GuiOutput "=== IOC Summary ==="
     $IOCFindings | ForEach-Object { Write-GuiOutput $_ }
