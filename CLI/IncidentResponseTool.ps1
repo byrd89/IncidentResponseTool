@@ -1,5 +1,6 @@
 $ModulePath = "$PSScriptRoot\..\Modules\IncidentResponseCore\IncidentResponseCore.psm1"
 Import-Module $ModulePath -Force
+Import-Module "$PSScriptRoot\..\Modules\SecurePassphrase\SecurePassphrase.psm1"
 
 # Define CLI Logger
 function Write-CliOutput {

@@ -1,55 +1,38 @@
 function Get-UserInformation {
-    param ([string]$UserPrincipalName)
+    param (
+        [string]$UserPrincipalName,
+        [ScriptBlock]$Logger
+    )
     try {
-        return Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop
+        if ($Logger) { & $Logger "Retrieving user information for $UserPrincipalName..." }
+        $User = Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop
+        return $User
     } catch {
-        Write-Warning "Unable to find user '$UserPrincipalName'. Please check the UPN and try again."
+        if ($Logger) { & $Logger "Unable to find user '$UserPrincipalName'. Please check the UPN and try again." }
         return $null
     }
 }
 
 function Get-AuditLogs {
-    param ([string]$UserPrincipalName, [string]$OutputFolder, [string]$FileDateStamp)
+    param (
+        [string]$UserPrincipalName,
+        [string]$OutputFolder,
+        [string]$FileDateStamp,
+        [ScriptBlock]$Logger
+    )
+    if ($Logger) { & $Logger "Retrieving audit logs..." }
     try {
         $AuditLogs = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-2) -EndDate (Get-Date) -UserIds $UserPrincipalName -ResultSize 100 -ErrorAction Stop
         if ($AuditLogs) {
             $AuditLogs | Export-Csv "$OutputFolder\AuditLogs_$FileDateStamp.csv" -NoTypeInformation
+            if ($Logger) { & $Logger "Audit logs saved to AuditLogs_$FileDateStamp.csv" }
         } else {
             "No audit logs found for this user." | Out-File "$OutputFolder\AuditLogs_$FileDateStamp.txt"
+            if ($Logger) { & $Logger "No audit logs found. Text summary saved." }
         }
         return $AuditLogs
     } catch {
-        Write-Warning "Error retrieving audit logs: $_"
-        return $null
-    }
-}
-
-function Get-MailboxRules {
-    param ([string]$UserPrincipalName)
-    try {
-        return Get-InboxRule -Mailbox $UserPrincipalName
-    } catch {
-        Write-Warning "Error retrieving mailbox rules: $_"
-        return $null
-    }
-}
-
-function Get-SignInLogs {
-    param ([string]$UserPrincipalName)
-    try {
-        return Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$UserPrincipalName'" -Top 100
-    } catch {
-        Write-Warning "Error retrieving sign-in logs: $_"
-        return $null
-    }
-}
-
-function Get-RegisteredDevices {
-    param ($User)
-    try {
-        return Get-MgUserRegisteredDevice -UserId $User.Id
-    } catch {
-        Write-Warning "Error retrieving registered devices: $_"
+        if ($Logger) { & $Logger "Error retrieving audit logs: $_" }
         return $null
     }
 }
@@ -60,43 +43,53 @@ function Get-IOCAnalysis {
         $MailboxRules,
         $AuditLogs,
         $OutputFolder,
-        $FileDateStamp
+        $FileDateStamp,
+        [ScriptBlock]$Logger
     )
 
     $SuspiciousFindings = @()
-    Write-Host "`n=== Running IOC Analysis ===" -ForegroundColor Cyan
+
+    if ($Logger) { & $Logger "Running IOC Analysis..." }
 
     if ($SignInLogs) {
         $ForeignLogins = $SignInLogs | Where-Object {
             $_.Location.Country -and $_.Location.Country -notin @("United States", "Canada")
         }
-        $SuspiciousFindings += if ($ForeignLogins.Count -gt 0) {
-            "Foreign sign-ins detected: $($ForeignLogins.Count)"
+
+        if ($ForeignLogins.Count -gt 0) {
+            $SuspiciousFindings += "Foreign sign-ins detected: $($ForeignLogins.Count)"
         } else {
-            "No foreign sign-ins found"
+            $SuspiciousFindings += "No foreign sign-ins found"
         }
 
         $LegacyApps = $SignInLogs | Where-Object {
             $_.ClientAppUsed -in @("IMAP", "POP", "SMTP", "Other clients")
         }
-        $SuspiciousFindings += if ($LegacyApps.Count -gt 0) {
-            "Legacy authentication protocols used: $($LegacyApps.ClientAppUsed | Sort-Object -Unique -join ', ')"
+
+        if ($LegacyApps.Count -gt 0) {
+            $SuspiciousFindings += "Legacy authentication protocols used: $($LegacyApps.ClientAppUsed | Sort-Object -Unique -join ', ')"
         } else {
-            "No legacy protocol usage detected"
+            $SuspiciousFindings += "No legacy protocol usage detected"
         }
     } else {
         $SuspiciousFindings += "Sign-in logs not available"
     }
 
     if ($MailboxRules) {
-        $ExternalForwards = $MailboxRules | Where-Object { $_.RedirectTo -match "@" }
-        $SuspiciousFindings += if ($ExternalForwards.Count -gt 0) {
-            "Mailbox rule forwards to external address found"
-        } else {
-            "No external forwarding rules found"
+        $ExternalForwards = $MailboxRules | Where-Object {
+            $_.RedirectTo -match "@"
         }
 
-        $AutoDeletes = $MailboxRules | Where-Object { $_.Description -match "delete" -or $_.From -eq $null }
+        if ($ExternalForwards.Count -gt 0) {
+            $SuspiciousFindings += "Mailbox rule forwards to external address found"
+        } else {
+            $SuspiciousFindings += "No external forwarding rules found"
+        }
+
+        $AutoDeletes = $MailboxRules | Where-Object {
+            $_.Description -match "delete" -or $_.From -eq $null
+        }
+
         if ($AutoDeletes.Count -gt 0) {
             $SuspiciousFindings += "Potential auto-delete or hidden inbox rule detected"
         }
@@ -108,10 +101,11 @@ function Get-IOCAnalysis {
         $SuspiciousOps = $AuditLogs | Where-Object {
             $_.Operation -in @("Set-Mailbox", "Add-MailboxPermission", "UpdateInboxRules", "New-InboxRule")
         }
-        $SuspiciousFindings += if ($SuspiciousOps.Count -gt 0) {
-            "Suspicious mailbox operations detected: $($SuspiciousOps.Operation | Sort-Object -Unique -join ', ')"
+
+        if ($SuspiciousOps.Count -gt 0) {
+            $SuspiciousFindings += "Suspicious mailbox operations detected: $($SuspiciousOps.Operation | Sort-Object -Unique -join ', ')"
         } else {
-            "No suspicious mailbox operations detected"
+            $SuspiciousFindings += "No suspicious mailbox operations detected"
         }
     } else {
         $SuspiciousFindings += "Audit logs not available"
@@ -120,9 +114,44 @@ function Get-IOCAnalysis {
     $IOCReportPath = "$OutputFolder\IOC_Summary_$FileDateStamp.txt"
     $SuspiciousFindings | Out-File -FilePath $IOCReportPath -Encoding UTF8
 
-    Write-Host "`n=== IOC Summary ===" -ForegroundColor Cyan
-    $SuspiciousFindings | ForEach-Object { Write-Host $_ }
+    if ($Logger) {
+        & $Logger "IOC Summary:"
+        $SuspiciousFindings | ForEach-Object { & $Logger $_ }
+        & $Logger "IOC findings saved to $IOCReportPath"
+    }
 
-    Write-Host "`nIOC findings saved to $IOCReportPath" -ForegroundColor Green
     return $SuspiciousFindings
+}
+
+function New-SecurePassphrase {
+    [CmdletBinding()]
+    param (
+        [int]$WordCount = 3
+    )
+
+    $Words = @(
+        "abacus", "abdomen", "abide", "ability", "ablaze", "abnormal", "abrasion", "absent", "absolute", "absurd",
+        "accent", "acclaim", "account", "accuracy", "acid", "acorn", "acting", "action", "activate", "active",
+        "actor", "actress", "actual", "acumen", "adapt", "addict", "adhere", "adjust", "admire", "admit",
+        "adopt", "adore", "adult", "adverb", "advice", "advise", "aerobic", "affair", "affect", "affirm"
+        # (Truncated for brevity — in production you would paste full list here)
+    )
+
+    $Random = Get-Random -InputObject $Words -Count $WordCount
+    return ($Random -join "-")
+}
+
+function New-SecurePassphrase {
+    [CmdletBinding()]
+    param (
+        [int]$WordCount = 3
+    )
+
+    $Words = Get-Content -Path "$PSScriptRoot\..\..\eff_wordlist_clean.txt"
+    if (-not $Words -or $Words.Count -lt $WordCount) {
+        throw "Word list could not be loaded or does not contain enough entries."
+    }
+
+    $Random = Get-Random -InputObject $Words -Count $WordCount
+    return ($Random -join "-")
 }
