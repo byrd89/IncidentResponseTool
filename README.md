@@ -1,65 +1,93 @@
-# Incident Response Tool (PowerShell)
+# Incident Response Tool
 
-This PowerShell script automates the process of collecting investigation data related to a compromised Microsoft 365 user. It is designed for use by IT administrators and security teams, especially in MSP and enterprise environments.
+This project is a PowerShell-based Incident Response Tool designed to help IT and security teams investigate suspected user compromises in Microsoft 365 environments. It supports both **CLI** and **GUI (WPF)** versions and integrates with **Microsoft Graph** and **Exchange Online PowerShell** for complete investigation workflows.
 
-## Features
+---
 
-- Prompt for compromised user's email address
-- Export:
-  - Unified Audit Logs (Exchange Online)
+##  Features
+
+- Prompt for user UPN and timestamped folder structure
+- Retrieves:
+  - Unified Audit Logs
   - Azure AD Sign-In Logs
-  - Mailbox Rules
-  - Device Registration Info
-- Generate a JSON summary for fast triage
-- Save results to a date-stamped folder
-- Handle "no results found" conditions gracefully
-- Progress bar to show execution steps
+  - Mailbox Inbox Rules
+  - Registered Devices
+- IOC (Indicator of Compromise) Analysis with summary
+- Microsoft Graph authentication and auto-logout
+- Modern WPF GUI with:
+  - UPN input
+  - Progress bar
+  - Output window
+  - Button to trigger log retrieval and display IOC summary
 
-## Output Structure
-C:\IR_Reports\user@domain.com\2025-06-07_14-45
-├── AuditLogs.csv
-├── SignInLogs.csv
-├── MailboxRules.csv
-├── RegisteredDevices.csv
-├── Summary.json
-├── *.txt (for empty/no-result warnings)
+---
 
-## Requirements
+##  Project Structure
 
-- PowerShell 7 (preferred)
-- Modules:
-  - ExchangeOnlineManagement
-  - AzureAD or Microsoft.Graph (for device info)
-- Microsoft 365 Audit Logging must be enabled
-- Sufficient admin permissions to pull logs
+```
+Incident Response/
+│
+├── CLI/
+│   └── IncidentResponseTool.ps1         # CLI version of the tool
+│
+├── GUI/
+│   ├── IncidentResponseTool.xaml        # XAML layout for GUI
+│   └── IncidentResponseTool_GUI.ps1     # GUI logic for PowerShell WPF app
+│
+├── Modules/
+│   └── IncidentResponseCore.psm1        # Shared functions for CLI & GUI
+│
+└── README.md
+```
 
-## How to Use
+---
 
-1. Connect to Microsoft 365 as an admin (you will be prompted).
-2. Run the script in VS Code or PowerShell 7.
-3. Enter the compromised user's UPN when prompted.
-4. Results are saved locally to `C:\IR_Reports`.
+##  Requirements
 
+- PowerShell 7.x or Windows PowerShell 5.1+
+- Microsoft.Graph PowerShell SDK modules:
+  - `Microsoft.Graph.Users`
+  - `Microsoft.Graph.Identity.SignIns`
+  - `Microsoft.Graph.Identity.DirectoryManagement`
+- ExchangeOnlineManagement module
+- Visual Studio (for GUI editing)
+
+---
+
+##  How to Run
+
+### CLI:
 ```powershell
+cd .\CLI
+Set-ExecutionPolicy Bypass -Scope Process -Force
 .\IncidentResponseTool.ps1
+```
 
+### GUI:
+```powershell
+cd .\GUI
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\IncidentResponseTool_GUI.ps1
+```
 
+---
 
-Roadmap / To-Do
- Add session revocation / disable account
+##  IOC Summary
 
- Add Defender alert pull via Graph
+The tool analyzes logs for:
+- Foreign sign-ins
+- Legacy protocol use (IMAP/POP/SMTP)
+- External forwarding inbox rules
+- Suspicious audit log activity (rule changes, mailbox changes)
 
- ZIP output folder for sharing
+---
 
- Build GUI version using WPF
+##  Auto-Logout
 
-Notes
-If Search-UnifiedAuditLog isn’t recognized, ensure you are authenticated with Connect-ExchangeOnline.
+The app logs out of Microsoft Graph automatically on:
+- GUI window close
+- CLI script exit
 
-Device logging requires AzureAD or Microsoft Graph SDK.
+---
 
-You can fork this repo and build on new features using branches.
-
-License
-MIT License (or update this to fit your usage).
+_Last updated: June 08, 2025_
