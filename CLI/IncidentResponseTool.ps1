@@ -1,86 +1,76 @@
 $ModulePath = "$PSScriptRoot\..\Modules\IncidentResponseCore\IncidentResponseCore.psm1"
 Import-Module $ModulePath -Force
 
+# Define CLI Logger
+function Write-CliOutput {
+    param ($text)
+    Write-Host $text -ForegroundColor Cyan
+}
+
 # Import required Graph modules
 Import-Module Microsoft.Graph.Users
 Import-Module Microsoft.Graph.Identity.SignIns
 Import-Module Microsoft.Graph.Identity.DirectoryManagement
 
-# Connect with the correct permissions
+# Connect to Graph
 Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All", "Device.Read.All", "AuditLog.Read.All"
 
-# Prompt for the user and timestamp
+# Prompt for user
 $UserPrincipalName = Read-Host "`nEnter the compromised user's UPN (email address)"
-$User = Get-UserInformation -UserPrincipalName $UserPrincipalName
-if (-not $User) { exit }
+$User = Get-UserInformation -UserPrincipalName $UserPrincipalName -Logger $function:Write-CliOutput
+if (-not $User) {
+    exit
+}
 
-Write-Host "`nTarget User:" -ForegroundColor Cyan
-Write-Host "Display Name     : $($User.DisplayName)"
-Write-Host "User Principal   : $($User.UserPrincipalName)"
-Write-Host "ID               : $($User.Id)`n"
+Write-CliOutput "`nTarget User:"
+Write-CliOutput "Display Name     : $($User.DisplayName)"
+Write-CliOutput "User Principal   : $($User.UserPrincipalName)"
+Write-CliOutput "ID               : $($User.Id)`n"
 
+# Setup paths
 $RunTimestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
 $FileDateStamp = Get-Date -Format "MM-dd-yyyy"
 $BasePath = "C:\Optimal\Incident_Response"
 $OutputFolder = Join-Path $BasePath "Incident_Response_$RunTimestamp"
 
-if (-not (Test-Path -Path $BasePath)) {
-    New-Item -ItemType Directory -Path $BasePath | Out-Null
-}
-if (-not (Test-Path -Path $OutputFolder)) {
-    New-Item -ItemType Directory -Path $OutputFolder | Out-Null
-}
+if (-not (Test-Path $BasePath)) { New-Item -ItemType Directory -Path $BasePath | Out-Null }
+if (-not (Test-Path $OutputFolder)) { New-Item -ItemType Directory -Path $OutputFolder | Out-Null }
 
-Write-Host "[$(Get-Date -Format T)] Starting incident response for $UserPrincipalName..." -ForegroundColor Cyan
+Write-CliOutput "[$(Get-Date -Format T)] Starting incident response for $UserPrincipalName..."
 
+# Exchange Online setup
 if (-not (Get-Module ExchangeOnlineManagement -ListAvailable)) {
     Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
 }
 Import-Module ExchangeOnlineManagement
-if (-not (Get-ConnectionInformation)) {
-    Connect-ExchangeOnline
-}
+if (-not (Get-ConnectionInformation)) { Connect-ExchangeOnline }
 
-# Initialize progress tracker
+# Progress simulation
 $progress = 0
 function Show-Progress {
     param ($Activity)
     $script:progress++
-    Write-Progress -Activity $Activity -Status "$progress/6 steps complete" -PercentComplete ($progress * 100 / 6)
+    $percent = [Math]::Min(($progress * 100 / 6), 100)
+    Write-Progress -Activity $Activity -Status "$progress/6 steps complete" -PercentComplete $percent
 }
 
-# Step 1: Retrieve Audit logs
+# Step 1: Audit Logs
 Show-Progress -Activity "Retrieving Unified Audit Logs..."
-$AuditLogs = Get-AuditLogs -UserPrincipalName $UserPrincipalName -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp
+$AuditLogs = Get-AuditLogs -UserPrincipalName $UserPrincipalName -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp -Logger $function:Write-CliOutput
 
-# Step 2: Export Sign-In Logs (Microsoft Graph)
+# Step 2: Sign-In Logs
 Show-Progress -Activity "Exporting Sign-In Logs..."
-$SignInLogs = Get-SignInLogs -UserPrincipalName $UserPrincipalName
-if ($SignInLogs) {
-    $SignInLogs | Export-Csv "$OutputFolder\SignInLogs_$FileDateStamp.csv" -NoTypeInformation
-} else {
-    "No sign-in log results found" | Out-File "$OutputFolder\SignInLogs_$FileDateStamp.txt"
-}
+$SignInLogs = Get-SignInLogs -UserPrincipalName $UserPrincipalName -Logger $function:Write-CliOutput
 
-# Step 3: Export Mailbox Rules
+# Step 3: Mailbox Rules
 Show-Progress -Activity "Exporting Mailbox Rules..."
-$MailboxRules = Get-MailboxRules -UserPrincipalName $UserPrincipalName
-if ($MailboxRules) {
-    $MailboxRules | Select Name, Description, Enabled, From, RedirectTo | Export-Csv "$OutputFolder\MailboxRules_$FileDateStamp.csv" -NoTypeInformation
-} else {
-    "No mailbox rules found" | Out-File "$OutputFolder\MailboxRules_$FileDateStamp.txt"
-}
+$MailboxRules = Get-MailboxRules -UserPrincipalName $UserPrincipalName -Logger $function:Write-CliOutput
 
-# Step 4: Export Device Registration Info (Microsoft Graph)
+# Step 4: Devices
 Show-Progress -Activity "Gathering Device Registration Info..."
-$Devices = Get-RegisteredDevices -User $User
-if ($Devices) {
-    $Devices | Export-Csv "$OutputFolder\RegisteredDevices_$FileDateStamp.csv" -NoTypeInformation
-} else {
-    "No registered devices found" | Out-File "$OutputFolder\RegisteredDevices_$FileDateStamp.txt"
-}
+$Devices = Get-RegisteredDevices -User $User -Logger $function:Write-CliOutput
 
-# Step 5: Export Summary JSON
+# Step 5: Summary JSON
 Show-Progress -Activity "Writing Summary File..."
 $Summary = @{
     User = $UserPrincipalName
@@ -92,10 +82,12 @@ $Summary = @{
 }
 $Summary | ConvertTo-Json -Depth 5 | Out-File "$OutputFolder\Summary.json"
 
-# Step 6: Run IOC analysis
-Get-IOCAnalysis -SignInLogs $SignInLogs -MailboxRules $MailboxRules -AuditLogs $AuditLogs -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp
+# Step 6: IOC Analysis
+Show-Progress -Activity "Running IOC Analysis..."
+$IOCFindings = Get-IOCAnalysis -SignInLogs $SignInLogs -MailboxRules $MailboxRules -AuditLogs $AuditLogs -OutputFolder $OutputFolder -FileDateStamp $FileDateStamp -Logger $function:Write-CliOutput
 
-# Step 7: Final message
+# Completion
 Show-Progress -Activity "Finalizing..."
-Write-Host "[$(Get-Date -Format T)] Incident data saved to $OutputFolder" -ForegroundColor Green
-Disconnect-MgGraph -ErrorAction SilentlyContinue
+Write-CliOutput "[$(Get-Date -Format T)] Incident data saved to $OutputFolder"
+Write-CliOutput "=== IOC Summary ==="
+$IOCFindings | ForEach-Object { Write-CliOutput $_ }
