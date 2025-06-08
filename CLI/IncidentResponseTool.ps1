@@ -1,3 +1,6 @@
+$ModulePath = "$PSScriptRoot\..\Modules\IncidentResponseCore\IncidentResponseCore.psm1"
+Import-Module $ModulePath -Force
+
 # Import required Graph modules
 Import-Module Microsoft.Graph.Users
 Import-Module Microsoft.Graph.Identity.SignIns

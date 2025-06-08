@@ -1,0 +1,32 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="Incident Response Tool" Height="650" Width="900"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- UPN Input -->
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,10">
+            <Label Content="Compromised UPN:" VerticalAlignment="Center"/>
+            <TextBox Name="UpnInput" Width="300" Margin="10,0,0,0"/>
+        </StackPanel>
+
+        <!-- Retrieve Logs Button -->
+        <Button Name="StartButton" Content="Retrieve Logs" Width="150" Height="40"
+                Grid.Row="1" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+
+        <!-- Progress Bar -->
+        <ProgressBar Name="ProgressBar" Grid.Row="2" Height="20" Minimum="0" Maximum="6"
+                     Value="0" Margin="0,0,0,10"/>
+
+        <!-- Output Window -->
+        <TextBox Name="OutputBox" Grid.Row="3" Margin="0,0,0,0"
+                 AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Auto" IsReadOnly="True"
+                 FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
+    </Grid>
+</Window>
