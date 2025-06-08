@@ -16,8 +16,12 @@
         </StackPanel>
 
         <!-- Retrieve Logs Button -->
-        <Button Name="StartButton" Content="Retrieve Logs" Width="150" Height="40"
-                Grid.Row="1" HorizontalAlignment="Left" Margin="0,0,0,10"/>
+        <!-- Buttons Row: Retrieve Logs + Exit -->
+        <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,0,0,10">
+            <Button Name="StartButton" Content="Retrieve Logs" Width="150" Height="40" Margin="0,0,10,0"/>
+            <Button Name="ExitButton" Content="Exit" Width="100" Height="40"/>
+        </StackPanel>
+
 
         <!-- Progress Bar -->
         <ProgressBar Name="ProgressBar" Grid.Row="2" Height="20" Minimum="0" Maximum="6"
