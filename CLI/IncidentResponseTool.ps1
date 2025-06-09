@@ -20,6 +20,20 @@ if (-not (Get-Module ExchangeOnlineManagement -ListAvailable)) {
 Import-Module ExchangeOnlineManagement
 if (-not (Get-ConnectionInformation)) { Connect-ExchangeOnline }
 
+function New-SecurePassphrase {
+    $words = @("Falcon", "River", "Jungle", "Orange", "Cyber", "Matrix", "Castle", "Photon", "Spark", "Neon")
+    $symbols = "!@#$%^&*"
+    $numbers = "0123456789"
+
+    $word1 = Get-Random -InputObject $words
+    $word2 = Get-Random -InputObject $words
+    $symbol = Get-Random -InputObject $symbols.ToCharArray()
+    $number = Get-Random -InputObject $numbers.ToCharArray()
+
+    $passphrase = "$word1$symbol$word2$number" -split '' | Sort-Object {Get-Random}
+    return ($passphrase -join '')
+}
+
 function Write-CliOutput {
     param ($text)
     Write-Host $text -ForegroundColor Cyan
