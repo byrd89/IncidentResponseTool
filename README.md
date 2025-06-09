@@ -1,93 +1,65 @@
-# Incident Response Tool
+# Incident Response CLI Tool
 
-This project is a PowerShell-based Incident Response Tool designed to help IT and security teams investigate suspected user compromises in Microsoft 365 environments. It supports both **CLI** and **GUI (WPF)** versions and integrates with **Microsoft Graph** and **Exchange Online PowerShell** for complete investigation workflows.
+Author: Edward Byrd  
+Purpose: Unified PowerShell-based Incident Response Toolkit for Microsoft 365 Environments
 
----
+## Overview
 
-##  Features
+This CLI tool supports incident response efforts by providing a guided, menu-driven PowerShell interface for investigating and mitigating account compromises in Microsoft 365 environments. It integrates with Microsoft Graph and Exchange Online to automate key actions and exports relevant logs for forensic review.
 
-- Prompt for user UPN and timestamped folder structure
-- Retrieves:
-  - Unified Audit Logs
-  - Azure AD Sign-In Logs
-  - Mailbox Inbox Rules
-  - Registered Devices
-- IOC (Indicator of Compromise) Analysis with summary
-- Microsoft Graph authentication and auto-logout
-- Modern WPF GUI with:
-  - UPN input
-  - Progress bar
-  - Output window
-  - Button to trigger log retrieval and display IOC summary
+## Features
 
----
+- Menu-driven interface for consistent containment workflows
+- Integration with Microsoft Graph and Exchange Online PowerShell modules
+- Test Mode to simulate actions without making changes
+- Displays compromised user information throughout the session
+- Collects and exports:
+  - Audit logs
+  - Sign-in logs
+  - Mailbox rules
+  - Device registration details
+  - IOC summary report
+- Tracks completed actions using a persistent marker (*)
+- Progress bar during log export
+- Ability to change the compromised account mid-session
+- Log output saved to: `C:\Optimal\Incident_Response\<timestamp>`
 
-##  Project Structure
+## Workflow
 
-```
-Incident Response/
-│
-├── CLI/
-│   └── IncidentResponseTool.ps1         # CLI version of the tool
-│
-├── GUI/
-│   ├── IncidentResponseTool.xaml        # XAML layout for GUI
-│   └── IncidentResponseTool_GUI.ps1     # GUI logic for PowerShell WPF app
-│
-├── Modules/
-│   └── IncidentResponseCore.psm1        # Shared functions for CLI & GUI
-│
-└── README.md
-```
+1. Launch the script
+2. Sign in with Microsoft 365 admin credentials
+3. Enter the UPN of the compromised user
+4. Select from the main menu options:
+   - Containment and Account Lockdown
+     - Revoke sessions
+     - Block sign-in
+     - Reset password
+   - Export logs
+   - Change compromised UPN
+   - Exit
+5. Actions completed during the session are marked for easy tracking
 
----
+## Prerequisites
 
-##  Requirements
+- PowerShell 7.x (recommended)
+- Microsoft 365 admin credentials
+- Required PowerShell modules:
+  - Microsoft.Graph
+  - ExchangeOnlineManagement
 
-- PowerShell 7.x or Windows PowerShell 5.1+
-- Microsoft.Graph PowerShell SDK modules:
-  - `Microsoft.Graph.Users`
-  - `Microsoft.Graph.Identity.SignIns`
-  - `Microsoft.Graph.Identity.DirectoryManagement`
-- ExchangeOnlineManagement module
-- Visual Studio (for GUI editing)
+## Installation
 
----
+1. Clone or download the script files
+2. Open PowerShell as Administrator
+3. Run the script using:
+   ```powershell
+   .\IncidentResponseTool.ps1
+   ```
+4. (Optional) Temporarily allow script execution if blocked:
+   ```powershell
+   Set-ExecutionPolicy RemoteSigned -Scope Process
+   ```
 
-##  How to Run
+## License
 
-### CLI:
-```powershell
-cd .\CLI
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\IncidentResponseTool.ps1
-```
-
-### GUI:
-```powershell
-cd .\GUI
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\IncidentResponseTool_GUI.ps1
-```
-
----
-
-##  IOC Summary
-
-The tool analyzes logs for:
-- Foreign sign-ins
-- Legacy protocol use (IMAP/POP/SMTP)
-- External forwarding inbox rules
-- Suspicious audit log activity (rule changes, mailbox changes)
-
----
-
-##  Auto-Logout
-
-The app logs out of Microsoft Graph automatically on:
-- GUI window close
-- CLI script exit
-
----
-
-_Last updated: June 08, 2025_
+MIT License (adjust as needed)
