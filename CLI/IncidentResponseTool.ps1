@@ -1,357 +1,138 @@
-# Incident Response CLI Tool
-# Author: Edward Byrd
+# Incident Response Tool GUI (Complete Script)
 
-#---------------------------
-# Show-TestBanner Helper
-#---------------------------
-function Show-TestBanner {
-    param([string]$Title)
-    if ($Global:TestMode) {
-        Write-Host ""
-        Write-Host ("=" * 60) -ForegroundColor Yellow
-        Write-Host ("    TEST MODE: {0}" -f $Title) -ForegroundColor Yellow
-        Write-Host ("=" * 60) -ForegroundColor Yellow
-        Write-Host ""
-    }
-}
-
-#---------------------------
-# Initialization & Imports
-#---------------------------
-Clear-Host
-$Global:TestMode = $false
-
-# Import shared module (password generator, utilities)
-$ModulePath = "$PSScriptRoot\..\Modules\IncidentResponseCore\IncidentResponseCore.psm1"
+# 1) Import shared module (password generator, utilities)
+$ModulePath = Join-Path $PSScriptRoot '..\Modules\IncidentResponseCore\IncidentResponseCore.psm1'
 Import-Module $ModulePath -Force
 
-# Connect to Microsoft Graph
-Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Yellow
-$null = Connect-MgGraph -Scopes "User.Read.All","Directory.Read.All","Device.Read.All","AuditLog.Read.All" -NoWelcome
+# 2) Load WPF assemblies
+Add-Type -AssemblyName PresentationFramework
 
-# Retrieve admin identity from current Graph context
-$ctx = Get-MgContext -ErrorAction Stop
-$Global:AdminUPN = $ctx.Account
+# 3) Load XAML UI
+$xamlPath = Join-Path $PSScriptRoot 'IncidentResponseTool.xaml'
+$xaml     = Get-Content -Path $xamlPath -Raw
+$reader   = [System.Xml.XmlReader]::Create((New-Object System.IO.StringReader $xaml))
+$window   = [Windows.Markup.XamlReader]::Load($reader)
 
-# Prompt for compromised user UPN
-do {
-    $Global:CompromisedUserUPN = Read-Host "Enter compromised user UPN"
-} while ([string]::IsNullOrWhiteSpace($Global:CompromisedUserUPN))
+# 4) Find all named controls
+$UpnInput             = $window.FindName('UpnInput')
+$ValidateUpnButton    = $window.FindName('ValidateUpnButton')
+$TestModeOn           = $window.FindName('TestModeOn')
+$TestModeOff          = $window.FindName('TestModeOff')
+$StatusUserInfo       = $window.FindName('StatusUserInfo')
+$MainMenuPanel        = $window.FindName('MainMenuPanel')
+$ContainmentPanel     = $window.FindName('ContainmentPanel')
+$ExportLogsPanel      = $window.FindName('ExportLogsPanel')
+$RemediationPanel     = $window.FindName('RemediationPanel')
+$ContainmentButton    = $window.FindName('ContainmentButton')
+$ExportLogsButton     = $window.FindName('ExportLogsButton')
+$RemediationButton    = $window.FindName('RemediationButton')
+$ExitButton           = $window.FindName('ExitButton')
+$RevokeButton         = $window.FindName('RevokeButton')
+$BlockButton          = $window.FindName('BlockButton')
+$ResetPassButton      = $window.FindName('ResetPassButton')
+$ContainmentBack      = $window.FindName('ContainmentBackButton')
+$SigninLogsButton     = $window.FindName('SigninLogsButton')
+$UnifiedLogsButton    = $window.FindName('UnifiedLogsButton')
+$InboxRulesButton     = $window.FindName('InboxRulesButton')
+$LogsBackButton       = $window.FindName('LogsBackButton')
+$ReenableButton       = $window.FindName('ReenableButton')
+$SummarizeButton      = $window.FindName('SummarizeButton')
+$RemediationBack      = $window.FindName('RemediationBackButton')
+$OutputBox            = $window.FindName('OutputBox')
 
-# Get target details
-$target = Get-MgUser -UserId $Global:CompromisedUserUPN -Property DisplayName,Mail
-$Global:CompromisedDisplayName = $target.DisplayName
-if ([string]::IsNullOrEmpty($target.Mail)) {
-    $Global:CompromisedEmail = $Global:CompromisedUserUPN
-} else {
-    $Global:CompromisedEmail = $target.Mail
+# 5) Authenticate modules (surfaces standard UI dialogs)
+Connect-MgGraph -Scopes 'User.Read.All','Directory.Read.All','AuditLog.Read.All'
+Import-Module ExchangeOnlineManagement -ErrorAction SilentlyContinue
+Connect-ExchangeOnline -ShowBanner:$false
+
+# 6) Helper functions
+function Write-GuiOutput { param($text) $OutputBox.AppendText($text + "`r`n"); $OutputBox.ScrollToEnd() }
+function Confirm-Action   { param($msg)  $r = [System.Windows.MessageBox]::Show($msg, 'Confirm', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question); return $r -eq 'Yes' }
+function Log-Action       { param($action) Add-Content -Path $ActionLogPath -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $action) }
+
+function Initialize-Folders {
+    $base = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Incident Response'
+    if (-not (Test-Path $base)) { New-Item -Path $base -ItemType Directory | Out-Null }
+    $ts = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+    $script:IncidentFolderPath = Join-Path $base "Session_$ts"
+    New-Item -Path $IncidentFolderPath -ItemType Directory | Out-Null
+    $script:ActionLogPath = Join-Path $IncidentFolderPath 'ActionLog.txt'
+    "[{0}] Session started for {1} ({2})" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $UserPrincipalName, $UserDisplayName |
+        Out-File -FilePath $ActionLogPath -Encoding UTF8
+    $script:LogsFolder = Join-Path $IncidentFolderPath "Logs_$ts"
+    New-Item -Path $LogsFolder -ItemType Directory | Out-Null
 }
 
-Write-Host "Target: $Global:CompromisedDisplayName <$Global:CompromisedEmail>" -ForegroundColor Green
-Start-Sleep -Seconds 1
-
-# Ensure Exchange Online module
-if (-not (Get-Module ExchangeOnlineManagement -ListAvailable)) {
-    Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
-}
-Import-Module ExchangeOnlineManagement
-if (-not (Get-ConnectionInformation)) { Connect-ExchangeOnline }
-
-# Create session folder and log file path
-$desktop              = [Environment]::GetFolderPath('Desktop')
-$baseFolder           = Join-Path $desktop 'Incident Response'
-if (-not (Test-Path $baseFolder)) {
-    New-Item -Path $baseFolder -ItemType Directory | Out-Null
-}
-$sessionTs                 = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-$Global:IncidentFolderPath = Join-Path $baseFolder "Session_$sessionTs"
-New-Item -Path $Global:IncidentFolderPath -ItemType Directory | Out-Null
-$Global:ActionLogPath      = Join-Path $Global:IncidentFolderPath 'ActionLog.txt'
-
-#---------------------------
-# Action Logger
-#---------------------------
-function Log-Action {
-    param([string]$Action)
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    if ($Global:TestMode) { $mode = 'TEST MODE' } else { $mode = 'LIVE' }
-    $entry = "[$timestamp][$mode] Admin: $Global:AdminUPN; Action: $Action; Target: $Global:CompromisedDisplayName <$Global:CompromisedEmail>"
-    Add-Content -Path $Global:ActionLogPath -Value $entry
-}
-
-#---------------------------
-# Task State Trackers
-#---------------------------
-$Global:ContainmentTasksCompleted    = @{ Revoke=$false; BlockSignIn=$false; ResetPass=$false }
-$Global:MailboxTasksCompleted        = @{ ExportRules=$false; RemoveRules=$false; SearchSuspicious=$false }
-$Global:LogTasksCompleted            = @{ SigninLogs=$false; AuditLogs=$false }
-$Global:DeviceTasksCompleted         = @{ Devices=$false; Roles=$false }
-$Global:FinalizeTasksCompleted       = @{ Summary=$false }
-$Global:RemediationTasksCompleted    = @{ Reenable=$false }
-
-#---------------------------
-# Utility Functions
-#---------------------------
-function Mark-TaskComplete {
-    param($taskName)
-    foreach ($dict in @(
-        $Global:ContainmentTasksCompleted,
-        $Global:MailboxTasksCompleted,
-        $Global:LogTasksCompleted,
-        $Global:DeviceTasksCompleted,
-        $Global:FinalizeTasksCompleted,
-        $Global:RemediationTasksCompleted
-    )) {
-        if ($dict.ContainsKey($taskName)) {
-            $dict[$taskName] = $true
-        }
+# 7) Task implementations
+function Do-Revoke     { Write-GuiOutput "-- Revoking sessions";     if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] revoke skipped' } elseif (Confirm-Action "Revoke sessions?") { Revoke-MgUserSignInSession -UserId $User.Id; Write-GuiOutput "Done"; Log-Action 'Sessions revoked' } }
+function Do-Block      { Write-GuiOutput "-- Blocking sign-in";        if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] block skipped'  } elseif (Confirm-Action "Block sign-in?") { Update-MgUser -UserId $User.Id -AccountEnabled $false; Write-GuiOutput "Done"; Log-Action 'Sign-in blocked' } }
+function Do-Reset      {
+    $pw = SecurePassword
+    Write-GuiOutput "-- Resetting password to $pw"
+    if ($TestModeOn.IsChecked) {
+        Write-GuiOutput "[Test] simulated"; Log-Action '[Test] reset skipped'
+    } elseif (Confirm-Action "Reset password?") {
+        Update-MgUser -UserId $User.Id -PasswordProfile @{ ForceChangePasswordNextSignIn = $true; Password = $pw }
+        Write-GuiOutput "Done"; Log-Action 'Password reset'
     }
 }
+function Do-SigninLogs { Write-GuiOutput "-- Exporting sign-in logs";     Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$UserPrincipalName'" | Export-Csv (Join-Path $LogsFolder 'SigninLogs.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Signin logs exported' }
+function Do-Unified    { Write-GuiOutput "-- Exporting unified audit logs"; Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -UserIds $UserPrincipalName | Export-Csv (Join-Path $LogsFolder 'UnifiedAuditLog.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Unified logs exported' }
+function Do-InboxRules { Write-GuiOutput "-- Exporting inbox rules";       Get-InboxRule -Mailbox $UserPrincipalName | Select Name,Enabled,Priority,Description,From,SubjectContainsWords,RedirectTo,MoveToFolder,StopProcessingRules | Export-Csv (Join-Path $LogsFolder 'InboxRules.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Inbox rules exported' }
+function Do-Reenable   { Write-GuiOutput "-- Re-enabling account";      if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] reenable skipped' } elseif (Confirm-Action "Re-enable account?") { Update-MgUser -UserId $User.Id -AccountEnabled $true; Write-GuiOutput "Done"; Log-Action 'Account re-enabled' } }
+function Do-Summarize  { Write-GuiOutput "-- Finalize & summarize";      Write-GuiOutput "Session folder: $IncidentFolderPath"; Write-GuiOutput "Logs folder:    $LogsFolder"; Log-Action 'Session summarized' }
 
-function Get-TaskMarker {
-    param($taskName)
-    foreach ($dict in @(
-        $Global:ContainmentTasksCompleted,
-        $Global:MailboxTasksCompleted,
-        $Global:LogTasksCompleted,
-        $Global:DeviceTasksCompleted,
-        $Global:FinalizeTasksCompleted,
-        $Global:RemediationTasksCompleted
-    )) {
-        if ($dict.ContainsKey($taskName)) {
-            if ($dict[$taskName]) { return '*' }
-            else { return ' ' }
-        }
+# 8) Navigation helpers
+function Show-Panel { param($panel) 
+    $MainMenuPanel.Visibility    = 'Collapsed'
+    $ContainmentPanel.Visibility = 'Collapsed'
+    $ExportLogsPanel.Visibility  = 'Collapsed'
+    $RemediationPanel.Visibility = 'Collapsed'
+    $panel.Visibility            = 'Visible'
+}
+function Show-Main  { Show-Panel $MainMenuPanel }
+
+# 9) Wire up button events
+$ValidateUpnButton.Add_Click({
+    $upn = $UpnInput.Text.Trim()
+    if (-not $upn) {
+        [System.Windows.MessageBox]::Show('Please enter a UPN','Error',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)
+        return
     }
-    return ' '
-}
-
-function Write-CliOutput {
-    param($text)
-    Write-Host $text -ForegroundColor Cyan
-}
-
-function Pause-And-Wait {
-    Read-Host "Press Enter to continue"
-}
-
-function Check-RequiredTasks {
-    if ($Global:ContainmentTasksCompleted.Values -contains $false) {
-        Write-CliOutput "Complete all Containment tasks first."
-        Pause-And-Wait
-        return $false
+    try {
+        $usr = Get-MgUser -UserId $upn -Property DisplayName -ErrorAction Stop
+        $global:UserPrincipalName = $upn
+        $global:UserDisplayName  = $usr.DisplayName
+        $StatusUserInfo.Text     = "User: $upn ($($usr.DisplayName))"
+        Initialize-Folders
+        Show-Main
+    } catch {
+        [System.Windows.MessageBox]::Show('UPN not found','Error',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Error)
     }
-    if ($Global:LogTasksCompleted.Values -contains $false) {
-        Write-CliOutput "Complete all Log Collection tasks first."
-        Pause-And-Wait
-        return $false
-    }
-    return $true
-}
+})
 
-#---------------------------
-# Export Logs
-#---------------------------
-function Export-IncidentLogs {
-    Clear-Host
-    Show-TestBanner -Title 'Export Incident Logs'
-    Write-Host "=== Export Incident Logs ===" -ForegroundColor Yellow
+$ContainmentButton.Add_Click({ Show-Panel $ContainmentPanel })
+$ExportLogsButton.Add_Click({ Show-Panel $ExportLogsPanel })
+$RemediationButton.Add_Click({ Show-Panel $RemediationPanel })
 
-    $ts   = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-    $path = Join-Path $Global:IncidentFolderPath "Logs_$ts"
-    New-Item -Path $path -ItemType Directory | Out-Null
+$ExitButton.Add_Click({
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
+    try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    $window.Close()
+})
 
-    Write-Host "Collecting sign-in logs..."
-    Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$Global:CompromisedUserUPN'" |
-        Export-Csv (Join-Path $path 'SigninLogs.csv') -NoTypeInformation
-    Mark-TaskComplete 'SigninLogs'
+$ContainmentBack.Add_Click({ Show-Main })
+$LogsBackButton.Add_Click({ Show-Main })
+$RemediationBack.Add_Click({ Show-Main })
 
-    Write-Host "Collecting unified audit logs..."
-    Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -UserIds $Global:CompromisedUserUPN |
-        Export-Csv (Join-Path $path 'UnifiedAuditLog.csv') -NoTypeInformation
-    Mark-TaskComplete 'AuditLogs'
+$RevokeButton.Add_Click({ Do-Revoke })
+$BlockButton.Add_Click({ Do-Block })
+$ResetPassButton.Add_Click({ Do-Reset })
+$SigninLogsButton.Add_Click({ Do-SigninLogs })
+$UnifiedLogsButton.Add_Click({ Do-Unified })
+$InboxRulesButton.Add_Click({ Do-InboxRules })
+$ReenableButton.Add_Click({ Do-Reenable })
+$SummarizeButton.Add_Click({ Do-Summarize })
 
-    Write-Host "Exporting detailed inbox rules..."
-    Get-InboxRule -Mailbox $Global:CompromisedUserUPN |
-        Select-Object Name,Enabled,Priority,Description,From,SubjectContainsWords,RedirectTo,MoveToFolder,StopProcessingRules |
-        Export-Csv (Join-Path $path 'InboxRules.csv') -NoTypeInformation
-    Mark-TaskComplete 'ExportRules'
-
-    Log-Action -Action 'Export incident logs'
-    Write-CliOutput "Logs saved to $path"
-    Pause-And-Wait
-}
-
-#---------------------------
-# Containment Menu
-#---------------------------
-function Show-ContainmentMenu {
-    do {
-        Clear-Host
-        Show-TestBanner -Title 'Containment & Account Lockdown'
-        Write-Host "Target: $Global:CompromisedDisplayName <$Global:CompromisedEmail>" -ForegroundColor Cyan
-        Write-Host "=== Containment & Account Lockdown ===" -ForegroundColor Yellow
-        Write-Host "1. Revoke user sessions $(Get-TaskMarker 'Revoke')"
-        Write-Host "2. Block user sign-in $(Get-TaskMarker 'BlockSignIn')"
-        Write-Host "3. Reset user password $(Get-TaskMarker 'ResetPass')"
-        Write-Host "4. Return to main menu"
-        $choice = Read-Host "Choose an option"
-
-        switch ($choice) {
-            '1' {
-                if ($Global:TestMode) {
-                    Write-Host "[TEST MODE] Simulating revoke" -ForegroundColor Yellow
-                } else {
-                    Revoke-MgUserSignInSession -UserId $Global:CompromisedUserUPN | Out-Null
-                    Mark-TaskComplete 'Revoke'
-                    Write-CliOutput "Sessions revoked"
-                }
-                Log-Action -Action 'Revoke user sessions'
-                Pause-And-Wait
-            }
-            '2' {
-                if ($Global:TestMode) {
-                    Write-Host "[TEST MODE] Simulating block" -ForegroundColor Yellow
-                } else {
-                    Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled:$false
-                    Mark-TaskComplete 'BlockSignIn'
-                    Write-CliOutput "Sign-in blocked"
-                }
-                Log-Action -Action 'Block user sign-in'
-                Pause-And-Wait
-            }
-            '3' {
-                if ($Global:TestMode) {
-                    Write-Host "[TEST MODE] Simulating password reset" -ForegroundColor Yellow
-                } else {
-                    $newPass = New-SecurePassword
-                    Update-MgUser -UserId $Global:CompromisedUserUPN -PasswordProfile @{
-                        Password                        = $newPass
-                        ForceChangePasswordNextSignIn = $true
-                    }
-                    Mark-TaskComplete 'ResetPass'
-                    Write-CliOutput "Password reset to $newPass"
-                }
-                Log-Action -Action 'Reset user password'
-                Pause-And-Wait
-            }
-            '4' { return }
-            default {
-                Write-CliOutput "Invalid selection."
-                Pause-And-Wait
-            }
-        }
-    } while ($true)
-}
-
-#---------------------------
-# Remediation Menu
-#---------------------------
-function Show-RemediationMenu {
-    if (-not (Check-RequiredTasks)) {
-        Write-CliOutput "Warning: Some required tasks are incomplete. Proceed anyway? (Y/N)"
-        $override = Read-Host
-        if ($override -ne 'Y') { return }
-    }
-    do {
-        Clear-Host
-        Show-TestBanner -Title 'Remediation & Recovery'
-        Write-Host "Target: $Global:CompromisedDisplayName <$Global:CompromisedEmail>" -ForegroundColor Cyan
-        Write-Host "=== Remediation & Recovery ===" -ForegroundColor Yellow
-        Write-Host "1. Re-enable user account $(Get-TaskMarker 'Reenable')"
-        Write-Host "2. Finalize & Summarize $(Get-TaskMarker 'Summary')"
-        Write-Host "3. Return to main menu"
-        $choice = Read-Host "Choose an option"
-
-        switch ($choice) {
-            '1' {
-                if ($Global:TestMode) {
-                    Write-Host "[TEST MODE] Simulating re-enable" -ForegroundColor Yellow
-                } else {
-                    Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled:$true
-                    Mark-TaskComplete 'Reenable'
-                    Write-CliOutput "Account re-enabled"
-                }
-                Log-Action -Action 'Re-enable user account'
-                Pause-And-Wait
-            }
-            '2' {
-                if ($Global:TestMode) {
-                    Write-Host "[TEST MODE] Skipping final summary" -ForegroundColor Yellow
-                } else {
-                    $ts = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-                    "Incident $($Global:CompromisedUserUPN) done at $ts" |
-                        Out-File (Join-Path $Global:IncidentFolderPath "Summary_$ts.txt")
-                    Mark-TaskComplete 'Summary'
-                    Write-CliOutput "Summary created"
-                }
-                Log-Action -Action 'Finalize & Summarize'
-                Pause-And-Wait
-            }
-            '3' { return }
-            default {
-                Write-CliOutput "Invalid selection."
-                Pause-And-Wait
-            }
-        }
-    } while ($true)
-}
-
-#---------------------------
-# Main Menu
-#---------------------------
-function Show-MainMenu {
-    do {
-        Clear-Host
-        Write-Host "=== Incident Response Tool ===" -ForegroundColor Cyan
-        Write-Host "Target: $Global:CompromisedDisplayName <$Global:CompromisedEmail>" -ForegroundColor Cyan
-        if ($Global:TestMode) { Write-Host "[TEST MODE: ON]" -ForegroundColor DarkYellow }
-        else { Write-Host "[TEST MODE: OFF]" -ForegroundColor DarkYellow }
-
-        Write-Host "1. Containment & Account Lockdown"
-        Write-Host "2. Export Incident Logs"
-        Write-Host "3. Remediation & Recovery"
-        Write-Host "4. Set/Change Compromised User UPN"
-        Write-Host "5. Exit"
-        Write-Host "T. Toggle Test Mode"
-
-        $choice = Read-Host "Choose an option"
-        switch ($choice) {
-            '1' { Show-ContainmentMenu; continue }
-            '2' { Export-IncidentLogs; continue }
-            '3' { Show-RemediationMenu; continue }
-            '4' {
-                do {
-                    $Global:CompromisedUserUPN = Read-Host "Enter new UPN"
-                } while ([string]::IsNullOrWhiteSpace($Global:CompromisedUserUPN))
-
-                $target = Get-MgUser -UserId $Global:CompromisedUserUPN -Property DisplayName,Mail
-                $Global:CompromisedDisplayName = $target.DisplayName
-                if ([string]::IsNullOrEmpty($target.Mail)) {
-                    $Global:CompromisedEmail = $Global:CompromisedUserUPN
-                } else {
-                    $Global:CompromisedEmail = $target.Mail
-                }
-
-                Write-CliOutput "Target set to $Global:CompromisedDisplayName <$Global:CompromisedEmail>"
-                Pause-And-Wait
-                continue
-            }
-            '5' {
-                Disconnect-MgGraph | Out-Null
-                Clear-Host
-                Write-Host "Exiting..." -ForegroundColor Yellow
-                exit
-            }
-            'T' { $Global:TestMode = -not $Global:TestMode; continue }
-            default {
-                Write-CliOutput "Invalid choice."
-                Pause-And-Wait
-                continue
-            }
-        }
-    } while ($true)
-}
-
-# Launch tool
-Show-MainMenu
+# 10) Show the GUI
+$window.ShowDialog() | Out-Null

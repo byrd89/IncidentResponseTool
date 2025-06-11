@@ -123,39 +123,6 @@ function Get-IOCAnalysis {
     return $SuspiciousFindings
 }
 
-function New-SecurePassphrase {
-    [CmdletBinding()]
-    param (
-        [int]$WordCount = 3
-    )
-
-    $Words = @(
-        "abacus", "abdomen", "abide", "ability", "ablaze", "abnormal", "abrasion", "absent", "absolute", "absurd",
-        "accent", "acclaim", "account", "accuracy", "acid", "acorn", "acting", "action", "activate", "active",
-        "actor", "actress", "actual", "acumen", "adapt", "addict", "adhere", "adjust", "admire", "admit",
-        "adopt", "adore", "adult", "adverb", "advice", "advise", "aerobic", "affair", "affect", "affirm"
-        # (Truncated for brevity â€” in production you would paste full list here)
-    )
-
-    $Random = Get-Random -InputObject $Words -Count $WordCount
-    return ($Random -join "-")
-}
-
-function New-SecurePassphrase {
-    [CmdletBinding()]
-    param (
-        [int]$WordCount = 3
-    )
-
-    $Words = Get-Content -Path "$PSScriptRoot\..\..\eff_wordlist_clean.txt"
-    if (-not $Words -or $Words.Count -lt $WordCount) {
-        throw "Word list could not be loaded or does not contain enough entries."
-    }
-
-    $Random = Get-Random -InputObject $Words -Count $WordCount
-    return ($Random -join "-")
-}
-
 # Generates a secure random password that meets Microsoft cloud policy recommendations
 function New-SecurePassword {
     param (
