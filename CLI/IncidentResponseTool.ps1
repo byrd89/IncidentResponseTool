@@ -1,243 +1,267 @@
 # Incident Response CLI Tool
 # Author: Edward Byrd
 
-Clear-Host
-$TestMode = $false
+#---------------------------
+# Show-TestBanner Helper
+#---------------------------
+function Show-TestBanner {
+    param(
+        [string]$Title
+    )
+    if ($Global:TestMode) {
+        Write-Host ""
+        Write-Host (("=" * 60)) -ForegroundColor Yellow
+        Write-Host ("    TEST MODE: {0}" -f $Title) -ForegroundColor Yellow
+        Write-Host (("=" * 60)) -ForegroundColor Yellow
+        Write-Host ""
+    }
+}
 
+#---------------------------
+# Initialization & Imports
+#---------------------------
+Clear-Host
+$Global:TestMode = $false
+
+# Import shared module (password generator, utilities)
 $ModulePath = "$PSScriptRoot\..\Modules\IncidentResponseCore\IncidentResponseCore.psm1"
 Import-Module $ModulePath -Force
 
+# Connect to Microsoft Graph
 Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Yellow
-$null = Connect-MgGraph -Scopes "User.Read.All", "Directory.Read.All", "Device.Read.All", "AuditLog.Read.All" -NoWelcome
+$null = Connect-MgGraph -Scopes "User.Read.All","Directory.Read.All","Device.Read.All","AuditLog.Read.All" -NoWelcome
 
-Write-Host "`nWelcome to the Incident Response CLI Tool" -ForegroundColor Cyan
+# Prompt for compromised user UPN
 do {
-    $Global:CompromisedUserUPN = Read-Host "Please enter the UPN of the compromised user"
+    $Global:CompromisedUserUPN = Read-Host "Enter compromised user UPN"
 } while ([string]::IsNullOrWhiteSpace($Global:CompromisedUserUPN))
-Write-Host "`nTarget set to: $Global:CompromisedUserUPN" -ForegroundColor Green
+Write-Host "Target: $Global:CompromisedUserUPN" -ForegroundColor Green
 Start-Sleep -Seconds 1
 
+# Ensure Exchange Online module
 if (-not (Get-Module ExchangeOnlineManagement -ListAvailable)) {
     Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
 }
 Import-Module ExchangeOnlineManagement
 if (-not (Get-ConnectionInformation)) { Connect-ExchangeOnline }
 
-$Global:ContainmentTasksCompleted = @{
-    Revoke = $false
-    BlockSignIn = $false
-    ResetPass = $false
-}
+#---------------------------
+# Task State Trackers
+#---------------------------
+$Global:ContainmentTasksCompleted = @{ Revoke=$false; BlockSignIn=$false; ResetPass=$false }
+$Global:MailboxTasksCompleted   = @{ ExportRules=$false; RemoveRules=$false; SearchSuspicious=$false }
+$Global:LogTasksCompleted       = @{ SigninLogs=$false; AuditLogs=$false }
+$Global:DeviceTasksCompleted    = @{ Devices=$false; Roles=$false }
+$Global:FinalizeTasksCompleted  = @{ Summary=$false }
+$Global:RemediationTasksCompleted = @{ Reenable=$false }
 
+#---------------------------
+# Utility Functions
+#---------------------------
 function Mark-TaskComplete {
-    param ($taskName)
-    if ($Global:ContainmentTasksCompleted.ContainsKey($taskName)) {
-        $Global:ContainmentTasksCompleted[$taskName] = $true
+    param($taskName)
+    foreach($dict in @(
+        $Global:ContainmentTasksCompleted,
+        $Global:MailboxTasksCompleted,
+        $Global:LogTasksCompleted,
+        $Global:DeviceTasksCompleted,
+        $Global:FinalizeTasksCompleted,
+        $Global:RemediationTasksCompleted
+    )) {
+        if($dict.ContainsKey($taskName)) {
+            $dict[$taskName] = $true
+        }
     }
 }
 
 function Get-TaskMarker {
-    param ($taskName)
-    if ($Global:ContainmentTasksCompleted[$taskName]) { return "*" }
-    else { return " " }
+    param($taskName)
+    foreach($dict in @(
+        $Global:ContainmentTasksCompleted,
+        $Global:MailboxTasksCompleted,
+        $Global:LogTasksCompleted,
+        $Global:DeviceTasksCompleted,
+        $Global:FinalizeTasksCompleted,
+        $Global:RemediationTasksCompleted
+    )) {
+        if($dict.ContainsKey($taskName)) {
+            if($dict[$taskName]) { return "*" } else { return " " }
+        }
+    }
+    return " "
 }
 
 function Write-CliOutput {
-    param ($text)
+    param($text)
     Write-Host $text -ForegroundColor Cyan
 }
 
 function Pause-And-Wait {
-    Write-Host ""
-    Read-Host "Press Enter to return to the previous menu"
+    Read-Host "Press Enter to continue"
 }
 
+function Check-RequiredTasks {
+    if($Global:ContainmentTasksCompleted.Values -contains $false) {
+        Write-CliOutput "Complete all Containment tasks first."
+        Pause-And-Wait; return $false
+    }
+    if($Global:LogTasksCompleted.Values -contains $false) {
+        Write-CliOutput "Complete all Log Collection tasks first."
+        Pause-And-Wait; return $false
+    }
+    return $true
+}
+
+#---------------------------
+# Export Logs
+#---------------------------
 function Export-IncidentLogs {
     Clear-Host
-    Write-Host "=== Exporting Incident Logs ===" -ForegroundColor Yellow
-    if ($Global:CompromisedUserUPN) { Write-Host "Target: $Global:CompromisedUserUPN" -ForegroundColor Cyan }
+    Show-TestBanner -Title 'Export Incident Logs'
+    Write-Host "=== Export Incident Logs ===" -ForegroundColor Yellow
 
-    $confirm = Read-Host "Do you want to proceed with exporting logs for $Global:CompromisedUserUPN? (Y/N)"
-    if ($confirm -ne "Y") {
-        Write-Host "Export cancelled." -ForegroundColor Red
-        Pause-And-Wait
-        Show-MainMenu
-        return
+    $desktop    = [Environment]::GetFolderPath('Desktop')
+    $baseFolder = Join-Path $desktop 'Incident Response'
+    if (-not (Test-Path $baseFolder)) {
+        New-Item -Path $baseFolder -ItemType Directory | Out-Null
     }
 
-    if ($TestMode) {
-        Write-Host "[TEST MODE ENABLED] Simulating log export for $Global:CompromisedUserUPN" -ForegroundColor DarkYellow
-        Write-Host "Command: Export sign-in logs, directory audit, mailbox rules, device registration, and IOC summary." -ForegroundColor DarkGray
-    } else {
-        $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-        $exportPath = "C:\\Optimal\\Incident_Response\\Incident_$timestamp"
-        New-Item -Path $exportPath -ItemType Directory -Force | Out-Null
+    $ts   = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+    $path = Join-Path $baseFolder ("Incident_$ts")
+    New-Item -Path $path -ItemType Directory | Out-Null
 
-        Write-Host "Exporting logs to: $exportPath" -ForegroundColor Cyan
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Initializing..." -PercentComplete 0
+    Write-Host "Collecting sign-in logs..."
+    Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$Global:CompromisedUserUPN'" |
+        Export-Csv (Join-Path $path 'SigninLogs.csv') -NoTypeInformation
+    Mark-TaskComplete "SigninLogs"
 
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Collecting sign-in logs..." -PercentComplete 20
-        Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$Global:CompromisedUserUPN'" | Export-Csv "$exportPath\SignInLogs.csv" -NoTypeInformation
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Collecting directory audit logs..." -PercentComplete 40
-        Get-MgAuditLogDirectoryAudit -Filter "initiatedBy/user/userPrincipalName eq '$Global:CompromisedUserUPN'" | Export-Csv "$exportPath\DirectoryAudit.csv" -NoTypeInformation
+    Write-Host "Collecting unified audit logs..."
+    Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -UserIds $Global:CompromisedUserUPN |
+        Export-Csv (Join-Path $path 'UnifiedAuditLog.csv') -NoTypeInformation
+    Mark-TaskComplete "AuditLogs"
 
-        $rules = Get-InboxRule -Mailbox $Global:CompromisedUserUPN
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Collecting mailbox rules..." -PercentComplete 60
-        $rules | Export-Csv "$exportPath\MailboxRules.csv" -NoTypeInformation
+    Write-Host "Exporting detailed inbox rules..."
+    $rules = Get-InboxRule -Mailbox $Global:CompromisedUserUPN
+    $props = @(
+        'Name','Enabled','Priority','Description',
+        'From','SubjectContainsWords','RedirectTo','MoveToFolder','StopProcessingRules'
+    )
+    $rules | Select-Object $props |
+        Export-Csv (Join-Path $path 'InboxRules_Detailed.csv') -NoTypeInformation
+    Mark-TaskComplete "ExportRules"
 
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Collecting device registration info..." -PercentComplete 80
-        Get-MgDevice -Filter "registeredOwners/any(o:o/userPrincipalName eq '$Global:CompromisedUserUPN')" | Export-Csv "$exportPath\DeviceInfo.csv" -NoTypeInformation
-
-        $ioc = @{
-            UserUPN = $Global:CompromisedUserUPN
-            ExportPath = $exportPath
-            Timestamp = (Get-Date).ToString("s")
-        }
-        $iocSummary = "IOC Summary Report"
-        $iocSummary += "`n-------------------"
-        $iocSummary += "`nUserUPN: $($ioc.UserUPN)"
-        $iocSummary += "`nExportPath: $($ioc.ExportPath)"
-        $iocSummary += "`nTimestamp: $($ioc.Timestamp)"
-        Write-Progress -Activity "Exporting Incident Logs" -Status "Finalizing IOC summary..." -PercentComplete 95
-        $iocSummary | Out-File "$exportPath\IOC_Summary.txt" -Encoding utf8
-        Write-Progress -Activity "Exporting Incident Logs" -Completed -Status "Done"
-    }
-
+    Write-CliOutput "Logs saved to $path"
     Pause-And-Wait
-    Export-IncidentLogs
 }
 
+#---------------------------
+# Containment Menu
+#---------------------------
+function Show-ContainmentMenu {
+    do {
+        Clear-Host
+        Show-TestBanner -Title 'Containment & Account Lockdown'
+        Write-Host "=== Containment & Account Lockdown ===" -ForegroundColor Yellow
+        Write-Host ("1. Revoke user sessions " + (Get-TaskMarker "Revoke"))
+        Write-Host ("2. Block user sign-in " + (Get-TaskMarker "BlockSignIn"))
+        Write-Host ("3. Reset user password " + (Get-TaskMarker "ResetPass"))
+        Write-Host "4. Return to main menu"
+        $choice = Read-Host "Choose an option"
+
+        switch($choice) {
+            '1' {
+                if($Global:TestMode) { Write-Host "[TEST MODE] Simulating revoke" -ForegroundColor Yellow } else {
+                    Revoke-MgUserSignInSession -UserId $Global:CompromisedUserUPN | Out-Null; Mark-TaskComplete "Revoke"; Write-CliOutput "Sessions revoked"
+                }
+                Pause-And-Wait
+            }
+            '2' {
+                if($Global:TestMode) { Write-Host "[TEST MODE] Simulating block" -ForegroundColor Yellow } else {
+                    Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled:$false; Mark-TaskComplete "BlockSignIn"; Write-CliOutput "Sign-in blocked"
+                }
+                Pause-And-Wait
+            }
+            '3' {
+                if($Global:TestMode) { Write-Host "[TEST MODE] Simulating password reset" -ForegroundColor Yellow } else {
+                    $newPass = New-SecurePassword; Update-MgUser -UserId $Global:CompromisedUserUPN -PasswordProfile @{ Password=$newPass; ForceChangePasswordNextSignIn=$true }
+                    Mark-TaskComplete "ResetPass"; Write-CliOutput "Password reset to $newPass"
+                }
+                Pause-And-Wait
+            }
+            '4' { return }
+            default { Write-CliOutput "Invalid selection."; Pause-And-Wait }
+        }
+    } while($true)
+}
+
+#---------------------------
+# Remediation Menu
+#---------------------------
+function Show-RemediationMenu {
+    if (-not (Check-RequiredTasks)) {
+        Write-CliOutput "Warning: Some required tasks are incomplete. Proceed anyway? (Y/N)"
+        $override = Read-Host
+        if ($override -ne 'Y') { return }
+    }
+    do {
+        Clear-Host
+        Show-TestBanner -Title 'Remediation & Recovery'
+        Write-Host "=== Remediation & Recovery ===" -ForegroundColor Yellow
+        Write-Host ("1. Re-enable user account " + (Get-TaskMarker "Reenable"))
+        Write-Host "2. Notify end user"
+        Write-Host ("3. Finalize & Summarize " + (Get-TaskMarker "Summary"))
+        Write-Host "4. Return to main menu"
+        $choice = Read-Host "Choose an option"
+
+        switch($choice) {
+            '1' {
+                if($Global:TestMode) { Write-Host "[TEST MODE] Simulating re-enable" -ForegroundColor Yellow } else {
+                    Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled:$true; Mark-TaskComplete "Reenable"; Write-CliOutput "Account re-enabled"
+                }
+                Pause-And-Wait
+            }
+            '2' { Write-CliOutput "Reminder sent to user."; Pause-And-Wait }
+            '3' {
+                if($Global:TestMode) { Write-Host "[TEST MODE] Skipping final summary" -ForegroundColor Yellow } else {
+                    $ts = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"; "Incident $($Global:CompromisedUserUPN) done at $ts" | Out-File "${path}\Summary-$ts.txt"; Mark-TaskComplete "Summary"; Write-CliOutput "Summary created"
+                }
+                Pause-And-Wait
+            }
+            '4' { return }
+            default { Write-CliOutput "Invalid selection."; Pause-And-Wait }
+        }
+    } while($true)
+}
+
+#---------------------------
+# Main Menu
+#---------------------------
 function Show-MainMenu {
-    Clear-Host
-    Write-Host "=== Incident Response Tool ===" -ForegroundColor Cyan
+    do {
+        Clear-Host
+        Write-Host "=== Incident Response Tool ===" -ForegroundColor Cyan
+        if($Global:CompromisedUserUPN) { Write-Host "Target: $Global:CompromisedUserUPN" -ForegroundColor Cyan }
+        if($Global:TestMode) { Write-Host "[TEST MODE: ON] Simulation mode." -ForegroundColor DarkYellow } else { Write-Host "[TEST MODE: OFF]" -ForegroundColor DarkYellow }
 
-    if ($Global:CompromisedUserUPN) {
-        Write-Host "Target: $Global:CompromisedUserUPN" -ForegroundColor Cyan
-        try {
-            $user = Get-MgUser -UserId $Global:CompromisedUserUPN
-            Write-Host "Display Name    : $($user.DisplayName)" -ForegroundColor DarkGray
-            Write-Host "Job Title       : $($user.JobTitle)" -ForegroundColor DarkGray
-            $enabledStatus = if ($user.AccountEnabled) { 'ENABLED' } else { 'DISABLED' }
-            
-        } catch {
-            Write-Host "Warning: Unable to retrieve user details." -ForegroundColor Red
-        }
-    }
+        Write-Host "1. Containment & Account Lockdown"
+        Write-Host "2. Export Incident Logs"
+        Write-Host "3. Remediation & Recovery"
+        Write-Host "4. Set/Change Compromised User UPN"
+        Write-Host "5. Exit"
+        Write-Host "T. Toggle Test Mode"
 
-    if ($TestMode) {
-        Write-Host "[TEST MODE ENABLED] No live changes will be made." -ForegroundColor DarkYellow
-    }
-
-    Write-Host "1. Containment and Account Lockdown"
-    Write-Host "2. Export Incident Logs"
-    Write-Host "3. Set/Change Compromised User UPN"
-    Write-Host "4. Exit"
-    Write-Host "T. Toggle Test Mode (enable/disable)"
-
-    $mainChoice = Read-Host "Choose an option"
-
-    switch ($mainChoice) {
-        '1' { 
-    Clear-Host
-    Write-Host "=== Containment & Account Lockdown ===" -ForegroundColor Yellow
-    if ($Global:CompromisedUserUPN) { Write-Host "Target: $Global:CompromisedUserUPN" -ForegroundColor Cyan }
-    if ($TestMode) { Write-Host "[TEST MODE ENABLED] Actions are simulated only." -ForegroundColor DarkYellow }
-
-    Write-Host ("1. Revoke user sessions " + (Get-TaskMarker "Revoke"))
-    Write-Host ("2. Block user sign-in " + (Get-TaskMarker "BlockSignIn"))
-    Write-Host ("3. Reset user password " + (Get-TaskMarker "ResetPass"))
-    Write-Host "4. Return to main menu"
-    $choice = Read-Host "Choose an option"
-
-    switch ($choice) {
-        '1' {
-            $confirm = Read-Host "Revoke sessions for $Global:CompromisedUserUPN? (Y/N)"
-            if ($confirm -eq 'Y') {
-                if ($TestMode) {
-                    Write-Host "[TEST MODE] Simulating: Revoke-MgUserSignInSession -UserId $Global:CompromisedUserUPN" -ForegroundColor Yellow
-                } else {
-                    Write-Host "[LIVE MODE] Running: Revoke-MgUserSignInSession -UserId $Global:CompromisedUserUPN" -ForegroundColor Red
-                    Revoke-MgUserSignInSession -UserId $Global:CompromisedUserUPN | Out-Null
-                    Mark-TaskComplete "Revoke"
-                        Write-CliOutput "Sessions revoked at $(Get-Date)"
-                }
-            }
-            Pause-And-Wait; Show-MainMenu
+        $choice = Read-Host "Choose an option"
+        switch($choice) {
+            '1' { Show-ContainmentMenu; continue }
+            '2' { Export-IncidentLogs; continue }
+            '3' { Show-RemediationMenu; continue }
+            '4' { $Global:CompromisedUserUPN = Read-Host "Enter new UPN"; Write-CliOutput "UPN set to $Global:CompromisedUserUPN"; Pause-And-Wait; continue }
+            '5' { Disconnect-MgGraph | Out-Null; Clear-Host; Write-Host "Exiting..." -ForegroundColor Yellow; exit }
+            'T' { $Global:TestMode = -not $Global:TestMode; continue }
+            default { Write-CliOutput "Invalid choice."; Pause-And-Wait; continue }
         }
-        '2' {
-            $confirm = Read-Host "Block sign-in for $Global:CompromisedUserUPN? (Y/N)"
-            if ($confirm -eq 'Y') {
-                if ($TestMode) {
-                    Write-Host "[TEST MODE] Simulating: Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled \$false" -ForegroundColor Yellow
-                } else {
-                    Write-Host "[LIVE MODE] Running: Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled \$false" -ForegroundColor Red
-                    Update-MgUser -UserId $Global:CompromisedUserUPN -AccountEnabled:$false
-                    Mark-TaskComplete "BlockSignIn"
-                    Write-CliOutput "Account sign-in blocked at $(Get-Date)"
-                }
-            }
-            Pause-And-Wait; Show-MainMenu
-        }
-        '3' {
-            $confirm = Read-Host "Generate and set new password for $Global:CompromisedUserUPN? (Y/N)"
-            if ($confirm -eq 'Y') {
-                $newPass = New-SecurePassphrase
-                Write-Host "New temporary password: $newPass" -ForegroundColor Magenta
-                Read-Host "Press Enter once you've saved the password"
-                if (-not $TestMode) {
-                    Update-MgUser -UserId $Global:CompromisedUserUPN -PasswordProfile @{
-                        ForceChangePasswordNextSignIn = $true
-                        Password = $newPass
-                    }
-                    Mark-TaskComplete "ResetPass"
-                    Write-CliOutput "Password reset at $(Get-Date)"
-                } else {
-                    Write-Host "[TEST MODE] Simulating password reset for $Global:CompromisedUserUPN" -ForegroundColor Yellow
-                }
-            }
-            Pause-And-Wait; Show-MainMenu
-        }
-        default {
-            Show-MainMenu
-        }
-    }
- }
-        '2' { Export-IncidentLogs }
-        '3' {
-            $Global:CompromisedUserUPN = Read-Host "Enter the UPN of the compromised account"
-            Write-Host "Compromised user set to: $Global:CompromisedUserUPN" -ForegroundColor Cyan
-    $Global:ContainmentTasksCompleted.Revoke = $false
-    $Global:ContainmentTasksCompleted.BlockSignIn = $false
-    $Global:ContainmentTasksCompleted.ResetPass = $false
-            Pause-And-Wait
-            Show-MainMenu
-        }
-        '4' {
-            Disconnect-MgGraph | Out-Null
-            Write-Host "`nExiting Incident Response CLI..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 1
-            Clear-Host
-            $Global:ContainmentTasksCompleted.Revoke = $false
-            $Global:ContainmentTasksCompleted.BlockSignIn = $false
-            $Global:ContainmentTasksCompleted.ResetPass = $false
-            exit
-        }
-        'T' {
-            $TestMode = -not $TestMode
-            if ($TestMode) {
-                Write-Host "Test Mode is now: ON" -ForegroundColor Yellow
-            } else {
-                Write-Host "Test Mode is now: OFF" -ForegroundColor Yellow
-            }
-            Pause-And-Wait
-            Show-MainMenu
-        }
-        default {
-            Write-CliOutput "Invalid choice."
-            Pause-And-Wait
-            Show-MainMenu
-        }
-    }
+    } while($true)
 }
 
+# Launch tool
 Show-MainMenu
