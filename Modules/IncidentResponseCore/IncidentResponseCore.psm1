@@ -134,7 +134,7 @@ function New-SecurePassphrase {
         "accent", "acclaim", "account", "accuracy", "acid", "acorn", "acting", "action", "activate", "active",
         "actor", "actress", "actual", "acumen", "adapt", "addict", "adhere", "adjust", "admire", "admit",
         "adopt", "adore", "adult", "adverb", "advice", "advise", "aerobic", "affair", "affect", "affirm"
-        # (Truncated for brevity — in production you would paste full list here)
+        # (Truncated for brevity â€” in production you would paste full list here)
     )
 
     $Random = Get-Random -InputObject $Words -Count $WordCount
@@ -154,4 +154,32 @@ function New-SecurePassphrase {
 
     $Random = Get-Random -InputObject $Words -Count $WordCount
     return ($Random -join "-")
+}
+
+# Generates a secure random password that meets Microsoft cloud policy recommendations
+function New-SecurePassword {
+    param (
+        [int]$length = 14
+    )
+
+    $upper = [char[]]"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    $lower = [char[]]"abcdefghijklmnopqrstuvwxyz"
+    $digit = [char[]]"0123456789"
+    $symbol = [char[]]"!@#$%^&*()-_=+[]{}|;:,.<>?/~"
+
+    # Ensure at least one character from each category
+    $mandatory = @(
+        Get-Random -InputObject $upper
+        Get-Random -InputObject $lower
+        Get-Random -InputObject $digit
+        Get-Random -InputObject $symbol
+    )
+
+    # Fill the rest of the password
+    $allChars = $upper + $lower + $digit + $symbol
+    $remaining = -join (1..($length - $mandatory.Count) | ForEach-Object { Get-Random -InputObject $allChars })
+
+    # Shuffle full password
+    $passwordChars = ($mandatory + $remaining.ToCharArray()) | Sort-Object { Get-Random }
+    return -join $passwordChars
 }
