@@ -1,34 +1,66 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="Incident Response Tool" Height="650" Width="900"
+        Title="Incident Response Tool" Height="750" Width="900"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>  <!-- UPN input -->
+            <RowDefinition Height="Auto"/>  <!-- Mode &amp; Status -->
+            <RowDefinition Height="*"/>     <!-- Menus -->
+            <RowDefinition Height="Auto"/>  <!-- Output -->
         </Grid.RowDefinitions>
 
-        <!-- UPN Input -->
+        <!-- UPN input and validation -->
         <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,10">
             <Label Content="Compromised UPN:" VerticalAlignment="Center"/>
             <TextBox Name="UpnInput" Width="300" Margin="10,0,0,0"/>
+            <Button Name="ValidateUpnButton" Content="Validate UPN" Width="120" Height="25" Margin="10,0,0,0"/>
         </StackPanel>
 
-        <!-- Retrieve Logs Button -->
-        <!-- Buttons Row: Retrieve Logs + Exit -->
+        <!-- Test mode and status -->
         <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,0,0,10">
-            <Button Name="StartButton" Content="Retrieve Logs" Width="150" Height="40" Margin="0,0,10,0"/>
-            <Button Name="ExitButton" Content="Exit" Width="100" Height="40"/>
+            <Label Content="Mode:" VerticalAlignment="Center"/>
+            <RadioButton Name="TestModeOn" Content="Test" GroupName="Mode" VerticalAlignment="Center" Margin="5,0"/>
+            <RadioButton Name="TestModeOff" Content="Live" GroupName="Mode" IsChecked="True" VerticalAlignment="Center" Margin="5,0"/>
+            <TextBlock Name="StatusUserInfo" FontWeight="Bold" Margin="20,0,0,0"/>
         </StackPanel>
 
+        <!-- Menu panels -->
+        <Grid Grid.Row="2">
+            <!-- Main menu -->
+            <StackPanel Name="MainMenuPanel" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <!-- Escape the & characters below -->
+                <Button Name="ContainmentButton" Content="Containment &amp; Account Lockdown" Width="250" Height="40" Margin="5"/>
+                <Button Name="ExportLogsButton" Content="Export Incident Logs" Width="250" Height="40" Margin="5"/>
+                <Button Name="RemediationButton" Content="Remediation &amp; Recovery" Width="250" Height="40" Margin="5"/>
+                <Button Name="ExitButton" Content="Exit" Width="100" Height="40" Margin="5"/>
+            </StackPanel>
 
-        <!-- Progress Bar -->
-        <ProgressBar Name="ProgressBar" Grid.Row="2" Height="20" Minimum="0" Maximum="6"
-                     Value="0" Margin="0,0,0,10"/>
+            <!-- Containment submenu -->
+            <StackPanel Name="ContainmentPanel" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Button Name="RevokeButton" Content="Revoke user sessions" Width="200" Height="35" Margin="5"/>
+                <Button Name="BlockButton" Content="Block user sign-in" Width="200" Height="35" Margin="5"/>
+                <Button Name="ResetPassButton" Content="Reset user password" Width="200" Height="35" Margin="5"/>
+                <Button Name="ContainmentBackButton" Content="Return to main menu" Width="200" Height="35" Margin="5"/>
+            </StackPanel>
 
-        <!-- Output Window -->
-        <TextBox Name="OutputBox" Grid.Row="3" Margin="0,0,0,0"
+            <!-- Export logs submenu -->
+            <StackPanel Name="ExportLogsPanel" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Button Name="SigninLogsButton" Content="Collect Sign-in Logs" Width="200" Height="35" Margin="5"/>
+                <Button Name="UnifiedLogsButton" Content="Collect Unified Audit Logs" Width="200" Height="35" Margin="5"/>
+                <Button Name="InboxRulesButton" Content="Collect Inbox Rules" Width="200" Height="35" Margin="5"/>
+                <Button Name="LogsBackButton" Content="Return to main menu" Width="200" Height="35" Margin="5"/>
+            </StackPanel>
+
+            <!-- Remediation submenu -->
+            <StackPanel Name="RemediationPanel" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Button Name="ReenableButton" Content="Re-enable user account" Width="200" Height="35" Margin="5"/>
+                <Button Name="SummarizeButton" Content="Finalize &amp; Summarize" Width="200" Height="35" Margin="5"/>
+                <Button Name="RemediationBackButton" Content="Return to main menu" Width="200" Height="35" Margin="5"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Output window -->
+        <TextBox Name="OutputBox" Grid.Row="3" Height="200" Margin="0,10,0,0"
                  AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
                  HorizontalScrollBarVisibility="Auto" IsReadOnly="True"
                  FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
