@@ -1,111 +1,149 @@
-# Incident Response CLI Menu
-Import-Module "$PSScriptRoot\..\Modules\SecurePassphrase\SecurePassphrase.psm1"
+# Incident Response Tool GUI (Fixed New-SecurePassword, no ternary, balanced braces)
 
-# Generate Secure Passphrase
-$Passphrase = New-SecurePassphrase
-Write-GuiOutput "Generated Passphrase: $Passphrase"
+# 1) Import shared module (password generator, utilities)
+$ModulePath = Join-Path $PSScriptRoot '..\Modules\IncidentResponseCore\IncidentResponseCore.psm1'
+Import-Module $ModulePath -Force
 
-function Show-MainMenu {
-    Clear-Host
-    Write-Host "Select an incident response action:" -ForegroundColor Cyan
-    Write-Host "1. Containment and Account Lockdown"
-    Write-Host "2. Mailbox Protection"
-    Write-Host "3. Audit and Cleanup"
-    Write-Host "4. Post-Remediation Tasks"
-    Write-Host "0. Exit"
-    return Read-Host "Enter your choice"
+# 2) Load WPF assemblies
+Add-Type -AssemblyName PresentationFramework
+
+# 3) Load XAML UI
+$xamlPath = Join-Path $PSScriptRoot 'IncidentResponseTool.xaml'
+$xaml     = Get-Content -Path $xamlPath -Raw
+$reader   = [System.Xml.XmlReader]::Create((New-Object System.IO.StringReader $xaml))
+$window   = [Windows.Markup.XamlReader]::Load($reader)
+
+# 4) Find controls
+$UpnInput             = $window.FindName('UpnInput')
+$ValidateUpnButton    = $window.FindName('ValidateUpnButton')
+$TestModeOn           = $window.FindName('TestModeOn')
+$TestModeOff          = $window.FindName('TestModeOff')
+$StatusUserInfo       = $window.FindName('StatusUserInfo')
+$MainMenuPanel        = $window.FindName('MainMenuPanel')
+$ContainmentPanel     = $window.FindName('ContainmentPanel')
+$ExportLogsPanel      = $window.FindName('ExportLogsPanel')
+$RemediationPanel     = $window.FindName('RemediationPanel')
+$ContainmentButton    = $window.FindName('ContainmentButton')
+$ExportLogsButton     = $window.FindName('ExportLogsButton')
+$RemediationButton    = $window.FindName('RemediationButton')
+$ExitButton           = $window.FindName('ExitButton')
+$RevokeButton         = $window.FindName('RevokeButton')
+$BlockButton          = $window.FindName('BlockButton')
+$ResetPassButton      = $window.FindName('ResetPassButton')
+$ContainmentBack      = $window.FindName('ContainmentBackButton')
+$SigninLogsButton     = $window.FindName('SigninLogsButton')
+$UnifiedLogsButton    = $window.FindName('UnifiedLogsButton')
+$InboxRulesButton     = $window.FindName('InboxRulesButton')
+$LogsBackButton       = $window.FindName('LogsBackButton')
+$ReenableButton       = $window.FindName('ReenableButton')
+$SummarizeButton      = $window.FindName('SummarizeButton')
+$RemediationBack      = $window.FindName('RemediationBackButton')
+$OutputBox            = $window.FindName('OutputBox')
+
+# 5) Authenticate
+Connect-MgGraph -Scopes 'User.Read.All','Directory.Read.All','AuditLog.Read.All'
+Import-Module ExchangeOnlineManagement -ErrorAction SilentlyContinue
+Connect-ExchangeOnline -ShowBanner:$false
+
+# 6) Helpers
+function Write-GuiOutput { param($t) $OutputBox.AppendText($t + "`r`n"); $OutputBox.ScrollToEnd() }
+function Confirm-Action   { param($m) $r=[System.Windows.MessageBox]::Show($m,'Confirm',[System.Windows.MessageBoxButton]::YesNo,[System.Windows.MessageBoxImage]::Question); return $r -eq 'Yes' }
+function Log-Action       { param($a) Add-Content -Path $ActionLogPath -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $a) }
+
+function Initialize-Folders {
+    $base = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Incident Response'
+    if (-not (Test-Path $base)) { New-Item -Path $base -ItemType Directory | Out-Null }
+    $ts = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+    $script:IncidentFolderPath = Join-Path $base "Session_$ts"
+    New-Item -Path $IncidentFolderPath -ItemType Directory | Out-Null
+    $script:ActionLogPath = Join-Path $IncidentFolderPath 'ActionLog.txt'
+    "[{0}] Session started for {1} ({2})" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $UserPrincipalName, $UserDisplayName |
+        Out-File -FilePath $ActionLogPath -Encoding UTF8
+    $script:LogsFolder = Join-Path $IncidentFolderPath "Logs_$ts"
+    New-Item -Path $LogsFolder -ItemType Directory | Out-Null
 }
 
-function Show-ContainmentMenu {
-    Clear-Host
-    Write-Host "Containment and Account Lockdown:" -ForegroundColor Yellow
-    Write-Host "1. Revoke user's active sessions"
-    Write-Host "2. Block user sign-in in Entra ID"
-    Write-Host "3. Reset user password and force sign-out"
-    Write-Host "4. Back to Main Menu"
-    return Read-Host "Enter your choice"
-}
-
-function Confirm-Action {
-    param ($Message)
-    $response = Read-Host "$Message [Y/N]"
-    return $response -match '^y'
-}
-
-function Log-IOCAction {
-    param ($Action)
-    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$Timestamp`t$Action" | Out-File -FilePath "$OutputFolder\IOC_Summary_$FileDateStamp.txt" -Append -Encoding UTF8
-}
-
-function Revoke-Sessions {
-    Write-Host "\nThis will revoke all active sessions for the user. This signs them out across all apps."
-    if (Confirm-Action "Proceed with revoking sessions?") {
-        Revoke-MgUserSignInSession -UserId $User.Id
-        $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        Write-Host "Sessions revoked at $now" -ForegroundColor Green
-        Log-IOCAction "Sessions revoked at $now"
+# 7) Task functions
+function Do-Revoke     { Write-GuiOutput "-- Revoking sessions"; if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] revoke skipped' } elseif (Confirm-Action "Revoke sessions?") { Revoke-MgUserSignInSession -UserId $User.Id; Write-GuiOutput "Done"; Log-Action 'Sessions revoked' } }
+function Do-Block      { Write-GuiOutput "-- Blocking sign-in"; if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] block skipped' } elseif (Confirm-Action "Block sign-in?") { Update-MgUser -UserId $User.Id -AccountEnabled $false; Write-GuiOutput "Done"; Log-Action 'Sign-in blocked' } }
+function Do-Reset      {
+    $pw = New-SecurePassword
+    Write-GuiOutput "-- Resetting password to $pw"
+    if ($TestModeOn.IsChecked) {
+        Write-GuiOutput "[Test] simulated"; Log-Action '[Test] reset skipped'
+    } elseif (Confirm-Action "Reset password?") {
+        Update-MgUser -UserId $User.Id -PasswordProfile @{ ForceChangePasswordNextSignIn = $true; Password = $pw }
+        Write-GuiOutput "Done"; Log-Action 'Password reset'
     }
 }
+function Do-SigninLogs { Write-GuiOutput "-- Exporting sign-in logs"; Get-MgAuditLogSignIn -Filter "userPrincipalName eq '$UserPrincipalName'" | Export-Csv (Join-Path $LogsFolder 'SigninLogs.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Signin logs exported' }
+function Do-Unified    { Write-GuiOutput "-- Exporting unified audit logs"; Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-7) -EndDate (Get-Date) -UserIds $UserPrincipalName | Export-Csv (Join-Path $LogsFolder 'UnifiedAuditLog.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Unified logs exported' }
+function Do-InboxRules { Write-GuiOutput "-- Exporting inbox rules"; Get-InboxRule -Mailbox $UserPrincipalName | Select Name,Enabled,Priority,Description,From,SubjectContainsWords,RedirectTo,MoveToFolder,StopProcessingRules | Export-Csv (Join-Path $LogsFolder 'InboxRules.csv') -NoTypeInformation; Write-GuiOutput "Done"; Log-Action 'Inbox rules exported' }
+function Do-Reenable   { Write-GuiOutput "-- Re-enabling account"; if ($TestModeOn.IsChecked) { Write-GuiOutput "[Test] simulated"; Log-Action '[Test] reenable skipped' } elseif (Confirm-Action "Re-enable account?") { Update-MgUser -UserId $User.Id -AccountEnabled $true; Write-GuiOutput "Done"; Log-Action 'Account re-enabled' } }
+function Do-Summarize  { Write-GuiOutput "-- Finalize & summarize"; Write-GuiOutput "Session folder: $IncidentFolderPath"; Write-GuiOutput "Logs folder:    $LogsFolder"; Log-Action 'Session summarized' }
 
-function Block-SignIn {
-    Write-Host "\nThis will block sign-in for the user in Entra ID."
-    if (Confirm-Action "Proceed with blocking sign-in?") {
-        Update-MgUser -UserId $User.Id -AccountEnabled:$false
-        $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        Write-Host "Sign-in blocked at $now" -ForegroundColor Green
-        Log-IOCAction "Sign-in blocked at $now"
+# 8) Navigation
+function Show-Panel { param($panel)
+    $MainMenuPanel.Visibility    = 'Collapsed'
+    $ContainmentPanel.Visibility = 'Collapsed'
+    $ExportLogsPanel.Visibility  = 'Collapsed'
+    $RemediationPanel.Visibility = 'Collapsed'
+    $panel.Visibility            = 'Visible'
+}
+function Show-Main  { Show-Panel $MainMenuPanel }
+
+# 9) Button events
+
+$ValidateUpnButton.Add_Click({
+    $upn = $UpnInput.Text.Trim()
+    if (-not $upn) {
+        [System.Windows.MessageBox]::Show('Please enter a UPN','Error',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)
+        return
     }
-}
+    try {
+        $usr = Get-MgUser -UserId $upn -Property DisplayName -ErrorAction Stop
+        $global:UserPrincipalName = $upn
+        $global:UserDisplayName  = $usr.DisplayName
+        # determine mode text
+        if ($TestModeOn.IsChecked) { $modeText = 'Test' } else { $modeText = 'Live' }
+        $StatusUserInfo.Text = "User: $upn ($($usr.DisplayName)) - Mode: $modeText"
 
-function Generate-Passphrase {
-    $words = @("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mango", "ninja", "omega", "panda", "quantum", "rocket", "sunny", "tango", "uniform", "vortex", "whiskey", "xray", "yankee", "zebra")
-    -join (1..3 | ForEach-Object { Get-Random -InputObject $words }) -join "-"
-}
-
-function Reset-Password {
-    Write-Host "\nThis will reset the user's password using a secure, easy-to-share format."
-    $passphrase = Generate-Passphrase
-    Write-Host "\nGenerated Password: $passphrase" -ForegroundColor Yellow
-    if (Confirm-Action "Proceed with password reset?") {
-        $SecurePassword = ConvertTo-SecureString -String $passphrase -AsPlainText -Force
-        Set-MgUserPassword -UserId $User.Id -PasswordProfile @{ ForceChangePasswordNextSignIn = $true; Password = $passphrase }
-        $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        Write-Host "Password reset successful at $now" -ForegroundColor Green
-        Log-IOCAction "Password reset at $now"
-        Remove-Variable passphrase
+        Initialize-Folders
+        Show-Main
+    } catch {
+        [System.Windows.MessageBox]::Show('UPN not found','Error',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Error)
     }
-}
+})
 
-# START MAIN FLOW
+$TestModeOn.Add_Checked({
+    $StatusUserInfo.Text = "User: $UserPrincipalName ($UserDisplayName) - Mode: Test"
+})
+$TestModeOff.Add_Checked({
+    $StatusUserInfo.Text = "User: $UserPrincipalName ($UserDisplayName) - Mode: Live"
+})
 
-$UserPrincipalName = Read-Host "Enter the compromised user's UPN"
-$User = Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop
-$RunTimestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
-$FileDateStamp = Get-Date -Format "MM-dd-yyyy"
-$BasePath = "C:\\Optimal\\Incident_Response"
-$OutputFolder = Join-Path $BasePath "Incident_Response_$RunTimestamp"
-if (-not (Test-Path $OutputFolder)) { New-Item -ItemType Directory -Path $OutputFolder | Out-Null }
+$ContainmentButton.Add_Click({ Show-Panel $ContainmentPanel })
+$ExportLogsButton.Add_Click({ Show-Panel $ExportLogsPanel })
+$RemediationButton.Add_Click({ Show-Panel $RemediationPanel })
 
-while ($true) {
-    switch (Show-MainMenu) {
-        '1' {
-            while ($true) {
-                switch (Show-ContainmentMenu) {
-                    '1' { Revoke-Sessions }
-                    '2' { Block-SignIn }
-                    '3' { Reset-Password }
-                    '4' { break }
-                    default { Write-Host "Invalid selection. Try again." -ForegroundColor Red }
-                }
-            }
-        }
-        '2' { Write-Host "Mailbox Protection not yet implemented." -ForegroundColor DarkYellow }
-        '3' { Write-Host "Audit and Cleanup not yet implemented." -ForegroundColor DarkYellow }
-        '4' { Write-Host "Post-Remediation Tasks not yet implemented." -ForegroundColor DarkYellow }
-        '0' { break }
-        default { Write-Host "Invalid selection. Try again." -ForegroundColor Red }
-    }
-}
+$ExitButton.Add_Click({
+    try { Disconnect-MgGraph -ErrorAction SilentlyContinue } catch {}
+    try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    $window.Close()
+})
 
-Write-Host "\nExiting Incident Response Tool..." -ForegroundColor Cyan
+$ContainmentBack.Add_Click({ Show-Main })
+$LogsBackButton.Add_Click({ Show-Main })
+$RemediationBack.Add_Click({ Show-Main })
+
+$RevokeButton.Add_Click({ Do-Revoke })
+$BlockButton.Add_Click({ Do-Block })
+$ResetPassButton.Add_Click({ Do-Reset })
+$SigninLogsButton.Add_Click({ Do-SigninLogs })
+$UnifiedLogsButton.Add_Click({ Do-Unified })
+$InboxRulesButton.Add_Click({ Do-InboxRules })
+$ReenableButton.Add_Click({ Do-Reenable })
+$SummarizeButton.Add_Click({ Do-Summarize })
+
+# 10) Show the window
+$window.ShowDialog() | Out-Null
